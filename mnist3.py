@@ -28,18 +28,34 @@ y = tf.placeholder(tf.float32, [None, n_classes])
 keep_prob = tf.placeholder(tf.float32)  # dropout (keep probability)
 
 
+global_step = tf.train.get_or_create_global_step()
+pruning_hparams = pruning.get_pruning_hparams().parse("")
+# Create a pruning object using the pruning hyperparameters
+pruning_obj = pruning.Pruning(pruning_hparams, global_step=global_step)
+
+# Use the pruning_obj to add ops to the training graph to update the masks
+# The conditional_mask_update_op will update the masks only when the
+# training step is in [begin_pruning_step, end_pruning_step] specified in
+# the pruning spec proto
+mask_update_op = pruning_obj.conditional_mask_update_op()
+
+# Use the pruning_obj to add summaries to the graph to track the sparsity
+#  of each of the layers
+pruning_obj.add_pruning_summaries()
+
+
 # Create Model
 def conv_net(x, weights, biases, dropout):
     # Reshape input picture
     x = tf.reshape(x, shape=[-1, 28, 28, 1])
 
     # Convolution Layer
-    conv1 = conv2d(x, weights['wc1'], biases['bc1'])
+    conv1 = masked_conv2d(x, weights['wc1'], biases['bc1'], name='conv1')
     # Max Pooling (down-sampling)
     conv1 = maxpool2d(conv1, k=2)
 
     # Convolution Layer
-    conv2 = conv2d(conv1, weights['wc2'], biases['bc2'])
+    conv2 = masked_conv2d(conv1, weights['wc2'], biases['bc2'], name='conv2')
     # Max Pooling (down-sampling)
     conv2 = maxpool2d(conv2, k=2)
 
@@ -99,6 +115,7 @@ with tf.Session() as sess:
         # Run optimization op (backprop)
         sess.run(optimizer, feed_dict={x: batch_x, y: batch_y,
                                        keep_prob: dropout})
+        sess.run(mask_update_op)
         if step % display_step == 0:
             # Calculate batch loss and accuracy
             loss, acc = sess.run([cost, accuracy], feed_dict={x: batch_x,
@@ -158,7 +175,7 @@ with g.as_default():
     sess.run(init)
 
     graph_def = g.as_graph_def()
-    tf.train.write_graph(graph_def, EXPORT_DIR, 'mnist_model_graph1.pb', as_text=False)
+    tf.train.write_graph(graph_def, EXPORT_DIR, 'mnist_model_graph.pb3', as_text=False)
 
     # Test trained model
     y_train = tf.placeholder("float", [None, 10])
